@@ -1,113 +1,169 @@
+// このプログラムは guigui/example/counter/main.go を改変して作成したものです。
+// 元のソースコードとの著作権は以下の通りです。
+// https://github.com/hajimehoshi/guigui/blob/3a01a55446f47a457eb3f07164247e922cb1df63/example/counter/main.go
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2024 Hajime Hoshi
+
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"image/color"
+	"os"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
-	_ "embed"
+	"github.com/hajimehoshi/guigui"
+	"github.com/hajimehoshi/guigui/basicwidget"
 )
 
-//go:embed "NotoSansJP-VariableFont_wght.ttf"
-var fontData []byte
+func NewRoot() *Root {
+	r := &Root{}
 
-var basicFont *text.GoTextFaceSource
-
-// レイアウトサイズの定数
-const (
-	// 16:9 のアスペクト比に設定
-	ScreenWidth  = 960
-	ScreenHeight = 540
-
-	FontSize = 48
-)
-
-// Game は Ebiten のゲームループを管理する
-type Game struct {
-	startTime   time.Time
-	countdown   time.Duration
-	remaining   time.Duration
-	isCompleted bool
+	r.countdown = 25 * time.Minute // 25分のカウントダウン
+	r.remaining = 25 * time.Minute
+	r.running = false
+	return r
 }
 
-// NewGame は新しいゲームインスタンスを作成
-func NewGame() *Game {
-	return &Game{
-		startTime:   time.Now(),
-		countdown:   10 * time.Second, // 10秒のカウントダウン
-		remaining:   10 * time.Second, // 初期状態では countdown と同じ
-		isCompleted: false,
+type Root struct {
+	guigui.RootWidget
+
+	resetButton basicwidget.TextButton
+	// タイマー停止ボタン
+	stopButton basicwidget.TextButton
+	// タイマー開始ボタン
+	startButton basicwidget.TextButton
+	counterText basicwidget.Text
+
+	startTime time.Time     // 開始時刻
+	countdown time.Duration // カウントダウン時間
+	remaining time.Duration // 残り時間
+	running   bool          // 動作中かどうか
+	paused    bool          // 一時停止中かどうか
+}
+
+func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppender) {
+	{
+		w, h := r.Size(context)
+		w -= 2 * basicwidget.UnitSize(context)
+		h -= 4 * basicwidget.UnitSize(context)
+		r.counterText.SetSize(w, h)
+		p := guigui.Position(r)
+		p.X += basicwidget.UnitSize(context)
+		p.Y += basicwidget.UnitSize(context)
+		guigui.SetPosition(&r.counterText, p)
+		appender.AppendChildWidget(&r.counterText)
+	}
+
+	r.resetButton.SetText("Reset")
+	r.resetButton.SetWidth(6 * basicwidget.UnitSize(context))
+	r.resetButton.SetOnUp(func() {
+		fmt.Println("Reset")
+		// カウントダウンをリセット
+		r.remaining = 25 * time.Minute
+		r.running = false
+		r.paused = false
+		r.startTime = time.Now() // 開始時刻もリセット
+		r.counterText.SetText(r.remainingTimeText())
+	})
+	{
+		p := guigui.Position(r)
+		_, h := r.Size(context)
+		p.X += basicwidget.UnitSize(context)
+		p.Y += h - 2*basicwidget.UnitSize(context)
+		guigui.SetPosition(&r.resetButton, p)
+		appender.AppendChildWidget(&r.resetButton)
+	}
+
+	r.stopButton.SetText("STOP")
+	r.stopButton.SetWidth(6 * basicwidget.UnitSize(context))
+	r.stopButton.SetOnUp(func() {
+		// カウントダウンを停止
+		r.running = false
+		r.paused = true
+	})
+	{
+		p := guigui.Position(r)
+		w, h := r.Size(context)
+		p.X += w - 7*basicwidget.UnitSize(context)
+		p.Y += h - 2*basicwidget.UnitSize(context)
+		guigui.SetPosition(&r.stopButton, p)
+		appender.AppendChildWidget(&r.stopButton)
+	}
+
+	r.startButton.SetText("START")
+	r.startButton.SetWidth(6 * basicwidget.UnitSize(context))
+	r.startButton.SetOnUp(func() {
+		// カウントダウンを開始
+		r.running = true
+
+		// 一時停止から再開の場合は、調整された開始時刻を設定する
+		if r.paused {
+			r.startTime = time.Now().Add(-r.countdown + r.remaining)
+			r.paused = false
+		} else {
+			r.startTime = time.Now()
+		}
+	})
+	{
+		p := guigui.Position(r)
+		w, h := r.Size(context)
+		p.X += w - int(13.5*float64(basicwidget.UnitSize(context)))
+		p.Y += h - 2*basicwidget.UnitSize(context)
+		guigui.SetPosition(&r.startButton, p)
+		appender.AppendChildWidget(&r.startButton)
 	}
 }
 
-// Update はフレームごとの更新処理
-func (g *Game) Update() error {
-	if g.isCompleted {
+func (r *Root) Update(context *guigui.Context) error {
+	if !r.running {
+		r.setCounterText()
+		guigui.Enable(&r.startButton)
+		guigui.Disable(&r.stopButton)
 		return nil
 	}
+	guigui.Enable(&r.stopButton)
+	guigui.Disable(&r.startButton)
 
 	// remaining を更新
-	elapsed := time.Since(g.startTime)
-	g.remaining = g.countdown - elapsed
-
-	if g.remaining <= 0 {
-		g.remaining = 0
-		g.isCompleted = true
+	elapsed := time.Since(r.startTime)
+	r.remaining = r.countdown - elapsed
+	if r.remaining < 0 {
+		r.remaining = 0
+		r.running = false
 	}
-
+	r.setCounterText()
 	return nil
 }
 
-// Draw は画面描画処理
-func (g *Game) Draw(screen *ebiten.Image) {
-	screen.Fill(color.Black) // 背景を黒に
-
-	// mm:ss 形式でタイマーを表示
-	minutes := int(g.remaining.Minutes())
-	seconds := int(g.remaining.Seconds()) % 60
-	msg := fmt.Sprintf("%02d:%02d", minutes, seconds)
-
-	if g.isCompleted {
-		msg = "Time's Up!"
-	}
-
-	// 画面中心より左側にタイマーを表示
-	// 横方向は画面幅の1/3あたり、縦方向は画面の上部1/3あたりに配置
-	textX := ScreenWidth / 4
-	textY := ScreenHeight/2 - FontSize/2
-
-	op := text.DrawOptions{}
-	op.ColorScale.ScaleWithColor(color.White)
-	op.GeoM.Translate(float64(textX), float64(textY)) // テキストの位置を調整
-	text.Draw(screen, msg, &text.GoTextFace{
-		Source: basicFont,
-		Size:   FontSize,
-	}, &op)
+func (r *Root) setCounterText() {
+	r.counterText.SetSelectable(true)
+	r.counterText.SetBold(true)
+	r.counterText.SetHorizontalAlign(basicwidget.HorizontalAlignCenter)
+	r.counterText.SetVerticalAlign(basicwidget.VerticalAlignMiddle)
+	r.counterText.SetScale(4)
+	r.counterText.SetText(r.remainingTimeText())
 }
 
-// Layout は画面サイズを設定
-func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return ScreenWidth, ScreenHeight
+func (r *Root) remainingTimeText() string {
+	minutes := int(r.remaining.Minutes())
+	seconds := int(r.remaining.Seconds()) % 60
+	return fmt.Sprintf("%02d:%02d", minutes, seconds)
+}
+
+func (r *Root) Draw(context *guigui.Context, dst *ebiten.Image) {
+	basicwidget.FillBackground(dst, context)
 }
 
 func main() {
-	// フォントを初期化
-	s, err := text.NewGoTextFaceSource(bytes.NewReader(fontData))
-	if err != nil {
-		panic(err)
+	op := &guigui.RunOptions{
+		Title:           "ポモドーロタイマー", // タイトルをアプリの目的に合わせて変更
+		WindowMinWidth:  600,
+		WindowMinHeight: 300,
 	}
-	basicFont = s
-
-	// ゲームを開始
-	ebiten.SetWindowSize(ScreenWidth, ScreenHeight)
-	ebiten.SetWindowTitle("Countdown Timer")
-
-	game := NewGame()
-	if err := ebiten.RunGame(game); err != nil {
-		panic(err)
+	if err := guigui.Run(NewRoot(), op); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }
