@@ -7,39 +7,45 @@ def generate_white_noise(duration, fs=48000):
     ホワイトノイズを生成する関数
     - duration: ノイズの長さ（秒）
     - fs: サンプルレート（Hz）
-    
-    ホワイトノイズは全周波数成分に均等なエネルギーを持つノイズです。
-    ここでは -1～1 の一様分布から乱数を生成し、正規化しています。
     """
     num_samples = int(duration * fs)
     noise = np.random.uniform(-1, 1, size=num_samples)
+    # 絶対最大値で正規化
     noise = noise / np.max(np.abs(noise))
     return noise
 
-def generate_pink_noise(duration, fs=48000):
+def generate_pink_noise(duration, fs=48000, norm_percentile=99.9):
     """
     ピンクノイズを生成する関数
     - duration: ノイズの長さ（秒）
     - fs: サンプルレート（Hz）
+    - norm_percentile: 正規化に用いるパーセンタイル（デフォルトは 99.9）
     
-    ピンクノイズは低周波成分が相対的に強く、高周波成分が弱い「1/f ノイズ」です。
-    
-    【アルゴリズムの流れ】
-      1. ホワイトノイズを生成。
-      2. np.fft.rfft により周波数領域へ変換。
-      3. 各周波数成分に 1/(n+1) のフィルタ（n は FFT のインデックス）を乗じ、
-         高周波成分を減衰させ、低周波成分を相対的に強調。
-      4. np.fft.irfft で逆変換し、時系列信号に戻す。
-      5. 最後に正規化して -1～1 の範囲に収める。
+    ピンクノイズは低周波成分が強い1/fノイズです。
+    この実装ではホワイトノイズに対して FFT を行い、
+    各周波数成分に 1/(n+1) のフィルタを適用して逆FFT しています。
+    最後に 99.9パーセンタイルで正規化することで、極端なピークに左右されず、
+    できるだけ信号の大部分をフルレンジに引き上げます。
     """
     num_samples = int(duration * fs)
     white_noise = np.random.uniform(-1, 1, size=num_samples)
+    
+    # FFT して周波数領域へ変換
     fft_white = np.fft.rfft(white_noise)
     freqs = np.arange(len(fft_white))
+    # 低周波成分を強調するためのフィルタ
     pink_filter = 1.0 / (freqs + 1)
     fft_pink = fft_white * pink_filter
+    
+    # 逆FFT して時系列信号に戻す
     pink_noise = np.fft.irfft(fft_pink)
-    pink_noise = pink_noise / np.max(np.abs(pink_noise))
+    
+    # 99.9パーセンタイルを利用して正規化（極端なピーク値の影響を抑制）
+    norm_factor = np.percentile(np.abs(pink_noise), norm_percentile)
+    pink_noise = pink_noise / norm_factor
+    
+    # 万が一のクリッピング対策
+    pink_noise = np.clip(pink_noise, -1, 1)
     return pink_noise
 
 def save_mp3(filename, data, fs=48000, gain_db=0):
@@ -49,19 +55,17 @@ def save_mp3(filename, data, fs=48000, gain_db=0):
     手順:
       1. データを 16bit PCM (整数) に変換し、バイト列化。
       2. BytesIO 経由で AudioSegment.from_raw を用い、生データからオーディオセグメントを作成。
-      3. gain_db (dB) の値を apply_gain で適用して音量を調整（正の値で増幅、負の値で減衰）。
+      3. gain_db (dB) の値を apply_gain で適用して音量を調整。
       4. MP3 としてエクスポート。
-    
-    ※ pydub を利用するため、システムに ffmpeg がインストールされ、パスが通っている必要があります。
     """
     # 16bit PCM に変換
     data_int16 = np.int16(data * 32767)
     audio_bytes = data_int16.tobytes()
     
-    # AudioSegment.from_raw を用いて生データからオーディオセグメントを作成
+    # 生データからオーディオセグメントを作成
     segment = AudioSegment.from_raw(BytesIO(audio_bytes), sample_width=2, frame_rate=fs, channels=1)
     
-    # gain_db が指定されている場合は音量調整
+    # gain_db が指定されている場合は音量調整（今回はピンクノイズは 0 dB 推奨）
     if gain_db != 0:
         segment = segment.apply_gain(gain_db)
         print(f"Applied gain: {gain_db} dB")
@@ -77,7 +81,7 @@ def main():
     white_noise = generate_white_noise(duration, fs)
     save_mp3("white_noise_5min.mp3", white_noise, fs, gain_db=-20)
     
-    # ピンクノイズ生成と MP3 保存
+    # ピンクノイズ生成と MP3 保存（生成時の正規化で振り幅を大きく）
     pink_noise = generate_pink_noise(duration, fs)
     save_mp3("pink_noise_5min.mp3", pink_noise, fs)
 
