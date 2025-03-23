@@ -28,8 +28,6 @@ var pinkNoiseData []byte
 
 // initAudio は埋め込んだ MP3 を読み込み、ループ再生用の audio.Player を初期化して返します。
 // START ボタンで Play()、STOP やタイマー終了時に Pause() を呼び出します。
-// TODO(zztkm): 音量調整をできるようにする
-// TODO(zztkm): STOP START するときにプツっという音がするのをどうにかする
 func initAudio() *audio.Player {
 	audioContext := audio.NewContext(sampleRate)
 
@@ -57,6 +55,8 @@ func initAudio() *audio.Player {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// 初期音量は 1.0
+	audioPlayer.SetVolume(1.0)
 	return audioPlayer
 }
 
@@ -65,6 +65,7 @@ func NewRoot() *Root {
 	r.countdown = 25 * time.Minute // 25分のカウントダウン
 	r.remaining = 25 * time.Minute
 	r.running = false
+	r.volume = 1.0 // 初期音量 1.0
 	return r
 }
 
@@ -74,7 +75,14 @@ type Root struct {
 	resetButton basicwidget.TextButton // リセットボタン
 	stopButton  basicwidget.TextButton // タイマー停止ボタン
 	startButton basicwidget.TextButton // タイマー開始ボタン
+
 	counterText basicwidget.Text
+
+	// 音量調整用ウィジェット
+	volUpButton   basicwidget.TextButton
+	volDownButton basicwidget.TextButton
+	volumeText    basicwidget.Text
+	volume        float64
 
 	startTime time.Time     // 開始時刻
 	countdown time.Duration // カウントダウン時間
@@ -87,6 +95,7 @@ type Root struct {
 }
 
 func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppender) {
+	// カウンタ表示のレイアウト
 	{
 		w, h := r.Size(context)
 		w -= 2 * basicwidget.UnitSize(context)
@@ -99,17 +108,16 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 		appender.AppendChildWidget(&r.counterText)
 	}
 
+	// Reset ボタン
 	r.resetButton.SetText("Reset")
 	r.resetButton.SetWidth(6 * basicwidget.UnitSize(context))
 	r.resetButton.SetOnUp(func() {
 		fmt.Println("Reset")
-		// カウントダウンをリセット
 		r.remaining = 25 * time.Minute
 		r.running = false
 		r.paused = false
-		r.startTime = time.Now() // 開始時刻もリセット
+		r.startTime = time.Now()
 		r.counterText.SetText(r.remainingTimeText())
-		// リセット時に音声も停止
 		if r.audioPlayer != nil {
 			r.audioPlayer.Pause()
 			r.audioPlayer.Rewind()
@@ -124,13 +132,12 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 		appender.AppendChildWidget(&r.resetButton)
 	}
 
+	// STOP ボタン
 	r.stopButton.SetText("STOP")
 	r.stopButton.SetWidth(6 * basicwidget.UnitSize(context))
 	r.stopButton.SetOnUp(func() {
-		// タイマーを停止
 		r.running = false
 		r.paused = true
-		// STOP ボタン押下で音声を止める
 		if r.audioPlayer != nil {
 			r.audioPlayer.Pause()
 		}
@@ -144,10 +151,10 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 		appender.AppendChildWidget(&r.stopButton)
 	}
 
+	// START ボタン
 	r.startButton.SetText("START")
 	r.startButton.SetWidth(6 * basicwidget.UnitSize(context))
 	r.startButton.SetOnUp(func() {
-		// タイマー開始
 		r.running = true
 		if r.paused {
 			r.startTime = time.Now().Add(-r.countdown + r.remaining)
@@ -155,7 +162,6 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 		} else {
 			r.startTime = time.Now()
 		}
-		// START ボタン押下でバックグラウンド音声を再生
 		if r.audioPlayer != nil {
 			r.audioPlayer.Play()
 		}
@@ -167,6 +173,67 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 		p.Y += h - 2*basicwidget.UnitSize(context)
 		guigui.SetPosition(&r.startButton, p)
 		appender.AppendChildWidget(&r.startButton)
+	}
+
+	// 音量調整ウィジェットのレイアウト
+	// Vol- ボタン
+	r.volDownButton.SetText("Vol-")
+	r.volDownButton.SetWidth(4 * basicwidget.UnitSize(context))
+	r.volDownButton.SetOnUp(func() {
+		r.volume -= 0.1
+		if r.volume < 0.0 {
+			r.volume = 0.0
+		}
+		if r.audioPlayer != nil {
+			r.audioPlayer.SetVolume(r.volume)
+		}
+		r.volumeText.SetText(fmt.Sprintf("Vol: %.1f", r.volume))
+	})
+	{
+		w, _ := r.Size(context)
+		p := guigui.Position(r)
+		p.X = w - 15*basicwidget.UnitSize(context)
+		p.Y = basicwidget.UnitSize(context)
+		guigui.SetPosition(&r.volDownButton, p)
+		appender.AppendChildWidget(&r.volDownButton)
+	}
+
+	// Vol+ ボタン
+	r.volUpButton.SetText("Vol+")
+	r.volUpButton.SetWidth(4 * basicwidget.UnitSize(context))
+	r.volUpButton.SetOnUp(func() {
+		r.volume += 0.1
+		if r.volume > 1.0 {
+			r.volume = 1.0
+		}
+		if r.audioPlayer != nil {
+			r.audioPlayer.SetVolume(r.volume)
+		}
+		r.volumeText.SetText(fmt.Sprintf("Vol: %.1f", r.volume))
+	})
+	{
+		w, _ := r.Size(context)
+		p := guigui.Position(r)
+		p.X = w - 9*basicwidget.UnitSize(context)
+		p.Y = basicwidget.UnitSize(context)
+		guigui.SetPosition(&r.volUpButton, p)
+		appender.AppendChildWidget(&r.volUpButton)
+	}
+
+	// 音量表示テキスト
+	r.volumeText.SetText(fmt.Sprintf("Vol: %.1f", r.volume))
+	r.volumeText.SetSelectable(true)
+	r.volumeText.SetBold(true)
+	r.volumeText.SetHorizontalAlign(basicwidget.HorizontalAlignCenter)
+	r.volumeText.SetVerticalAlign(basicwidget.VerticalAlignMiddle)
+	r.volumeText.SetScale(1.5)
+	{
+		w, _ := r.Size(context)
+		p := guigui.Position(r)
+		p.X = w - 20*basicwidget.UnitSize(context)
+		p.Y = basicwidget.UnitSize(context)
+		guigui.SetPosition(&r.volumeText, p)
+		appender.AppendChildWidget(&r.volumeText)
 	}
 }
 
@@ -180,18 +247,29 @@ func (r *Root) Update(context *guigui.Context) error {
 	guigui.Enable(&r.stopButton)
 	guigui.Disable(&r.startButton)
 
-	// 残り時間を更新
+	// 残り時間の更新
 	elapsed := time.Since(r.startTime)
 	r.remaining = r.countdown - elapsed
 	if r.remaining < 0 {
 		r.remaining = 0
 		r.running = false
-		// タイマーが 0 になったら音声を停止
+		// タイマー終了時に音声を停止
 		if r.audioPlayer != nil {
 			r.audioPlayer.Pause()
 		}
 	}
 	r.setCounterText()
+
+	if r.volume == 1.0 {
+		guigui.Disable(&r.volUpButton)
+		guigui.Enable(&r.volDownButton)
+	} else if r.volume == 0.0 {
+		guigui.Disable(&r.volDownButton)
+		guigui.Enable(&r.volUpButton)
+	} else {
+		guigui.Enable(&r.volUpButton)
+		guigui.Enable(&r.volDownButton)
+	}
 	return nil
 }
 
@@ -226,7 +304,5 @@ func main() {
 	}
 	if err := guigui.Run(root, op); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		//nolint:govet
-		// ※ エラー時は標準エラー出力へ
 	}
 }
