@@ -11,8 +11,10 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/ebitengine/gomobile v0.0.0-20250209143333-6071a2a2351c // indirect
 	github.com/ebitengine/hideconsole v1.0.0 // indirect
+	github.com/ebitengine/oto/v3 v3.4.0-alpha.4 // indirect
 	github.com/ebitengine/purego v0.9.0-alpha.2 // indirect
 	github.com/go-text/typesetting v0.3.0 // indirect
+	github.com/hajimehoshi/go-mp3 v0.3.4 // indirect
 	github.com/hajimehoshi/oklab v0.0.0-20231202174141-83d68450b640 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20241217141322-fcc2cadd6f08 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect

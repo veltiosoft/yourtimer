@@ -7,19 +7,61 @@
 package main
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
-
+	"github.com/hajimehoshi/ebiten/v2/audio"
+	"github.com/hajimehoshi/ebiten/v2/audio/mp3"
 	"github.com/hajimehoshi/guigui"
 	"github.com/hajimehoshi/guigui/basicwidget"
 )
 
+const sampleRate = 48000 // _scripts/main.py で指定したサンプルレート
+
+//go:embed _scripts/pink_noise_5min.mp3
+var pinkNoiseData []byte
+
+// initAudio は埋め込んだ MP3 を読み込み、ループ再生用の audio.Player を初期化して返します。
+// START ボタンで Play()、STOP やタイマー終了時に Pause() を呼び出します。
+// TODO(zztkm): 音量調整をできるようにする
+// TODO(zztkm): STOP START するときにプツっという音がするのをどうにかする
+func initAudio() *audio.Player {
+	audioContext := audio.NewContext(sampleRate)
+
+	// 埋め込み済みの MP3 データを bytes.Reader 経由で扱う
+	reader := bytes.NewReader(pinkNoiseData)
+
+	// MP3 を F32 版でデコード
+	d, err := mp3.DecodeF32(reader)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// ループ端部のノイズを抑えるため、全体の長さより約 0.1[s]分少なく設定する
+	const extraTimeSeconds = 0.1
+	extraBytes := int64(float64(sampleRate*4) * extraTimeSeconds)
+	loopLength := d.Length() - extraBytes
+	if loopLength < 0 {
+		loopLength = d.Length()
+	}
+
+	// InfiniteLoop により、音声をループ再生できるようにする
+	loopStream := audio.NewInfiniteLoop(d, loopLength)
+
+	audioPlayer, err := audioContext.NewPlayerF32(loopStream)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return audioPlayer
+}
+
 func NewRoot() *Root {
 	r := &Root{}
-
 	r.countdown = 25 * time.Minute // 25分のカウントダウン
 	r.remaining = 25 * time.Minute
 	r.running = false
@@ -29,11 +71,9 @@ func NewRoot() *Root {
 type Root struct {
 	guigui.RootWidget
 
-	resetButton basicwidget.TextButton
-	// タイマー停止ボタン
-	stopButton basicwidget.TextButton
-	// タイマー開始ボタン
-	startButton basicwidget.TextButton
+	resetButton basicwidget.TextButton // リセットボタン
+	stopButton  basicwidget.TextButton // タイマー停止ボタン
+	startButton basicwidget.TextButton // タイマー開始ボタン
 	counterText basicwidget.Text
 
 	startTime time.Time     // 開始時刻
@@ -41,6 +81,9 @@ type Root struct {
 	remaining time.Duration // 残り時間
 	running   bool          // 動作中かどうか
 	paused    bool          // 一時停止中かどうか
+
+	// バックグラウンド音声のプレイヤー（タイマー開始で再生、停止・終了で停止）
+	audioPlayer *audio.Player
 }
 
 func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppender) {
@@ -66,6 +109,11 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 		r.paused = false
 		r.startTime = time.Now() // 開始時刻もリセット
 		r.counterText.SetText(r.remainingTimeText())
+		// リセット時に音声も停止
+		if r.audioPlayer != nil {
+			r.audioPlayer.Pause()
+			r.audioPlayer.Rewind()
+		}
 	})
 	{
 		p := guigui.Position(r)
@@ -79,9 +127,13 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 	r.stopButton.SetText("STOP")
 	r.stopButton.SetWidth(6 * basicwidget.UnitSize(context))
 	r.stopButton.SetOnUp(func() {
-		// カウントダウンを停止
+		// タイマーを停止
 		r.running = false
 		r.paused = true
+		// STOP ボタン押下で音声を止める
+		if r.audioPlayer != nil {
+			r.audioPlayer.Pause()
+		}
 	})
 	{
 		p := guigui.Position(r)
@@ -95,15 +147,17 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 	r.startButton.SetText("START")
 	r.startButton.SetWidth(6 * basicwidget.UnitSize(context))
 	r.startButton.SetOnUp(func() {
-		// カウントダウンを開始
+		// タイマー開始
 		r.running = true
-
-		// 一時停止から再開の場合は、調整された開始時刻を設定する
 		if r.paused {
 			r.startTime = time.Now().Add(-r.countdown + r.remaining)
 			r.paused = false
 		} else {
 			r.startTime = time.Now()
+		}
+		// START ボタン押下でバックグラウンド音声を再生
+		if r.audioPlayer != nil {
+			r.audioPlayer.Play()
 		}
 	})
 	{
@@ -126,12 +180,16 @@ func (r *Root) Update(context *guigui.Context) error {
 	guigui.Enable(&r.stopButton)
 	guigui.Disable(&r.startButton)
 
-	// remaining を更新
+	// 残り時間を更新
 	elapsed := time.Since(r.startTime)
 	r.remaining = r.countdown - elapsed
 	if r.remaining < 0 {
 		r.remaining = 0
 		r.running = false
+		// タイマーが 0 になったら音声を停止
+		if r.audioPlayer != nil {
+			r.audioPlayer.Pause()
+		}
 	}
 	r.setCounterText()
 	return nil
@@ -157,13 +215,18 @@ func (r *Root) Draw(context *guigui.Context, dst *ebiten.Image) {
 }
 
 func main() {
+	root := NewRoot()
+	// バックグラウンド音声を初期化し、ルートウィジェットに設定
+	root.audioPlayer = initAudio()
+
 	op := &guigui.RunOptions{
-		Title:           "ポモドーロタイマー", // タイトルをアプリの目的に合わせて変更
+		Title:           "ポモドーロタイマー",
 		WindowMinWidth:  600,
 		WindowMinHeight: 300,
 	}
-	if err := guigui.Run(NewRoot(), op); err != nil {
+	if err := guigui.Run(root, op); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		//nolint:govet
+		// ※ エラー時は標準エラー出力へ
 	}
 }
