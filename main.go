@@ -117,7 +117,7 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 		r.running = false
 		r.paused = false
 		r.startTime = time.Now()
-		r.counterText.SetText(r.remainingTimeText())
+		r.counterText.SetText(r.formatRemainingTime())
 		if r.audioPlayer != nil {
 			r.audioPlayer.Pause()
 			r.audioPlayer.Rewind()
@@ -279,10 +279,10 @@ func (r *Root) setCounterText() {
 	r.counterText.SetHorizontalAlign(basicwidget.HorizontalAlignCenter)
 	r.counterText.SetVerticalAlign(basicwidget.VerticalAlignMiddle)
 	r.counterText.SetScale(4)
-	r.counterText.SetText(r.remainingTimeText())
+	r.counterText.SetText(r.formatRemainingTime())
 }
 
-func (r *Root) remainingTimeText() string {
+func (r *Root) formatRemainingTime() string {
 	minutes := int(r.remaining.Minutes())
 	seconds := int(r.remaining.Seconds()) % 60
 	return fmt.Sprintf("%02d:%02d", minutes, seconds)
