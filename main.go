@@ -23,6 +23,10 @@ import (
 
 const sampleRate = 48000 // _scripts/main.py で指定したサンプルレート
 
+const (
+	timeupPlayerDefaultVolume = 0.5 // 効果音の音量
+)
+
 //go:embed _scripts/pink_noise_5min.mp3
 var pinkNoiseData []byte
 
@@ -323,6 +327,7 @@ func main() {
 	// バックグラウンド音声と効果音を初期化し、ルートウィジェットに設定
 	root.audioPlayer = initAudio(ctx)
 	root.timeupPlayer = initTimeupAudio(ctx)
+	root.timeupPlayer.SetVolume(timeupPlayerDefaultVolume)
 
 	op := &guigui.RunOptions{
 		Title:           "ポモドーロタイマー",
