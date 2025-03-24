@@ -26,20 +26,19 @@ const sampleRate = 48000 // _scripts/main.py で指定したサンプルレー�
 //go:embed _scripts/pink_noise_5min.mp3
 var pinkNoiseData []byte
 
-// initAudio は埋め込んだ MP3 を読み込み、ループ再生用の audio.Player を初期化して返します。
-// START ボタンで Play()、STOP やタイマー終了時に Pause() を呼び出します。
-func initAudio() *audio.Player {
-	audioContext := audio.NewContext(sampleRate)
+// 効果音ファイル timeup.mp3 を埋め込み
+//
+//go:embed timeup.mp3
+var timeupData []byte
 
-	// 埋め込み済みの MP3 データを bytes.Reader 経由で扱う
+// initAudio は背景音用の MP3 を読み込み、ループ再生用の audio.Player を初期化します。
+func initAudio(ctx *audio.Context) *audio.Player {
+	// 埋め込んだ MP3 データを bytes.Reader 経由で扱う
 	reader := bytes.NewReader(pinkNoiseData)
-
-	// MP3 を F32 版でデコード
 	d, err := mp3.DecodeF32(reader)
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	// ループ端部のノイズを抑えるため、全体の長さより約 0.1[s]分少なく設定する
 	const extraTimeSeconds = 0.1
 	extraBytes := int64(float64(sampleRate*4) * extraTimeSeconds)
@@ -47,15 +46,27 @@ func initAudio() *audio.Player {
 	if loopLength < 0 {
 		loopLength = d.Length()
 	}
-
 	// InfiniteLoop により、音声をループ再生できるようにする
 	loopStream := audio.NewInfiniteLoop(d, loopLength)
-
-	audioPlayer, err := audioContext.NewPlayerF32(loopStream)
+	audioPlayer, err := ctx.NewPlayerF32(loopStream)
 	if err != nil {
 		log.Fatal(err)
 	}
-	// 初期音量は 1.0
+	audioPlayer.SetVolume(1.0)
+	return audioPlayer
+}
+
+// initTimeupAudio は効果音用の MP3 を読み込み、1 回再生用の audio.Player を初期化します。
+func initTimeupAudio(ctx *audio.Context) *audio.Player {
+	reader := bytes.NewReader(timeupData)
+	d, err := mp3.DecodeF32(reader)
+	if err != nil {
+		log.Fatal(err)
+	}
+	audioPlayer, err := ctx.NewPlayerF32(d)
+	if err != nil {
+		log.Fatal(err)
+	}
 	audioPlayer.SetVolume(1.0)
 	return audioPlayer
 }
@@ -66,6 +77,7 @@ func NewRoot() *Root {
 	r.remaining = 25 * time.Minute
 	r.running = false
 	r.volume = 1.0 // 初期音量 1.0
+	r.timeupPlayed = false
 	return r
 }
 
@@ -90,8 +102,11 @@ type Root struct {
 	running   bool          // 動作中かどうか
 	paused    bool          // 一時停止中かどうか
 
-	// バックグラウンド音声のプレイヤー（タイマー開始で再生、停止・終了で停止）
-	audioPlayer *audio.Player
+	// 背景音と効果音のプレイヤー
+	audioPlayer  *audio.Player // 背景音（ピンクノイズ）用
+	timeupPlayer *audio.Player // タイマー終了時の効果音用
+	// 効果音再生済みフラグ
+	timeupPlayed bool
 }
 
 func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppender) {
@@ -122,6 +137,8 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 			r.audioPlayer.Pause()
 			r.audioPlayer.Rewind()
 		}
+		// 効果音再生済みフラグをリセット
+		r.timeupPlayed = false
 	})
 	{
 		p := guigui.Position(r)
@@ -250,10 +267,17 @@ func (r *Root) Update(context *guigui.Context) error {
 	// 残り時間の更新
 	elapsed := time.Since(r.startTime)
 	r.remaining = r.countdown - elapsed
-	if r.remaining < 0 {
+	if r.remaining <= 0 {
 		r.remaining = 0
+		// タイマー終了時に効果音を 1 度だけ再生
+		if !r.timeupPlayed {
+			if r.timeupPlayer != nil {
+				r.timeupPlayer.Rewind()
+				r.timeupPlayer.Play()
+			}
+			r.timeupPlayed = true
+		}
 		r.running = false
-		// タイマー終了時に音声を停止
 		if r.audioPlayer != nil {
 			r.audioPlayer.Pause()
 		}
@@ -293,9 +317,12 @@ func (r *Root) Draw(context *guigui.Context, dst *ebiten.Image) {
 }
 
 func main() {
+	// 共通の audio.Context を作成（背景音・効果音で共有）
+	ctx := audio.NewContext(sampleRate)
 	root := NewRoot()
-	// バックグラウンド音声を初期化し、ルートウィジェットに設定
-	root.audioPlayer = initAudio()
+	// バックグラウンド音声と効果音を初期化し、ルートウィジェットに設定
+	root.audioPlayer = initAudio(ctx)
+	root.timeupPlayer = initTimeupAudio(ctx)
 
 	op := &guigui.RunOptions{
 		Title:           "ポモドーロタイマー",
