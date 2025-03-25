@@ -24,7 +24,7 @@ import (
 const sampleRate = 48000 // _scripts/main.py で指定したサンプルレート
 
 const (
-	timeupPlayerDefaultVolume = 0.5 // 効果音の音量
+	timeupPlayerDefaultVolume = 0.2 // 効果音の音量
 )
 
 //go:embed _scripts/pink_noise_5min.mp3
