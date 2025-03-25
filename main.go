@@ -37,7 +37,6 @@ var timeupData []byte
 
 // initAudio は背景音用の MP3 を読み込み、ループ再生用の audio.Player を初期化します。
 func initAudio(ctx *audio.Context) *audio.Player {
-	// 埋め込んだ MP3 データを bytes.Reader 経由で扱う
 	reader := bytes.NewReader(pinkNoiseData)
 	d, err := mp3.DecodeF32(reader)
 	if err != nil {
@@ -50,7 +49,6 @@ func initAudio(ctx *audio.Context) *audio.Player {
 	if loopLength < 0 {
 		loopLength = d.Length()
 	}
-	// InfiniteLoop により、音声をループ再生できるようにする
 	loopStream := audio.NewInfiniteLoop(d, loopLength)
 	audioPlayer, err := ctx.NewPlayerF32(loopStream)
 	if err != nil {
@@ -77,11 +75,12 @@ func initTimeupAudio(ctx *audio.Context) *audio.Player {
 
 func NewRoot() *Root {
 	r := &Root{}
-	r.countdown = 25 * time.Minute // 25分のカウントダウン
+	// 初期状態は作業セッション：25分
+	r.workSession = true
+	r.countdown = 25 * time.Minute
 	r.remaining = 25 * time.Minute
 	r.running = false
 	r.volume = 1.0 // 初期音量 1.0
-	r.timeupPlayed = false
 	return r
 }
 
@@ -100,17 +99,18 @@ type Root struct {
 	volumeText    basicwidget.Text
 	volume        float64
 
-	startTime time.Time     // 開始時刻
-	countdown time.Duration // カウントダウン時間
+	startTime time.Time     // セッション開始時刻
+	countdown time.Duration // 現在のセッションのカウントダウン時間
 	remaining time.Duration // 残り時間
 	running   bool          // 動作中かどうか
 	paused    bool          // 一時停止中かどうか
 
+	// セッション種別: true は作業（25分）、false は休憩（5分）
+	workSession bool
+
 	// 背景音と効果音のプレイヤー
 	audioPlayer  *audio.Player // 背景音（ピンクノイズ）用
 	timeupPlayer *audio.Player // タイマー終了時の効果音用
-	// 効果音再生済みフラグ
-	timeupPlayed bool
 }
 
 func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppender) {
@@ -132,6 +132,8 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 	r.resetButton.SetWidth(6 * basicwidget.UnitSize(context))
 	r.resetButton.SetOnUp(func() {
 		fmt.Println("Reset")
+		r.workSession = true
+		r.countdown = 25 * time.Minute
 		r.remaining = 25 * time.Minute
 		r.running = false
 		r.paused = false
@@ -141,8 +143,6 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 			r.audioPlayer.Pause()
 			r.audioPlayer.Rewind()
 		}
-		// 効果音再生済みフラグをリセット
-		r.timeupPlayed = false
 	})
 	{
 		p := guigui.Position(r)
@@ -183,8 +183,15 @@ func (r *Root) Layout(context *guigui.Context, appender *guigui.ChildWidgetAppen
 		} else {
 			r.startTime = time.Now()
 		}
-		if r.audioPlayer != nil {
-			r.audioPlayer.Play()
+		// 作業セッション時はBGMを再生、休憩時はBGM不要
+		if r.workSession {
+			if r.audioPlayer != nil {
+				r.audioPlayer.Play()
+			}
+		} else {
+			if r.audioPlayer != nil {
+				r.audioPlayer.Pause()
+			}
 		}
 	})
 	{
@@ -271,19 +278,33 @@ func (r *Root) Update(context *guigui.Context) error {
 	// 残り時間の更新
 	elapsed := time.Since(r.startTime)
 	r.remaining = r.countdown - elapsed
+
+	// セッション終了時は自動で次のセッションに切り替える
 	if r.remaining <= 0 {
-		r.remaining = 0
-		// タイマー終了時に効果音を 1 度だけ再生
-		if !r.timeupPlayed {
-			if r.timeupPlayer != nil {
-				r.timeupPlayer.Rewind()
-				r.timeupPlayer.Play()
-			}
-			r.timeupPlayed = true
+		// 効果音を再生
+		if r.timeupPlayer != nil {
+			r.timeupPlayer.Rewind()
+			r.timeupPlayer.Play()
 		}
-		r.running = false
-		if r.audioPlayer != nil {
-			r.audioPlayer.Pause()
+
+		if r.workSession {
+			// 作業セッション終了 → 休憩セッション開始（BGMは不要）
+			r.workSession = false
+			r.countdown = 5 * time.Minute
+			r.remaining = r.countdown
+			r.startTime = time.Now()
+			if r.audioPlayer != nil {
+				r.audioPlayer.Pause() // BGM停止
+			}
+		} else {
+			// 休憩セッション終了 → 作業セッション開始
+			r.workSession = true
+			r.countdown = 25 * time.Minute
+			r.remaining = r.countdown
+			r.startTime = time.Now()
+			if r.audioPlayer != nil {
+				r.audioPlayer.Play() // 作業セッションはBGM再生
+			}
 		}
 	}
 	r.setCounterText()
@@ -321,10 +342,8 @@ func (r *Root) Draw(context *guigui.Context, dst *ebiten.Image) {
 }
 
 func main() {
-	// 共通の audio.Context を作成（背景音・効果音で共有）
 	ctx := audio.NewContext(sampleRate)
 	root := NewRoot()
-	// バックグラウンド音声と効果音を初期化し、ルートウィジェットに設定
 	root.audioPlayer = initAudio(ctx)
 	root.timeupPlayer = initTimeupAudio(ctx)
 	root.timeupPlayer.SetVolume(timeupPlayerDefaultVolume)
