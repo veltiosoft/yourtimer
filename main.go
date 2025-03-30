@@ -21,6 +21,7 @@ import (
 	"github.com/hajimehoshi/guigui/basicwidget"
 )
 
+// TODO(zztkm): sampleRate を mp3 ファイルから取得するようにする
 const sampleRate = 48000 // _scripts/main.py で指定したサンプルレート
 
 const (
@@ -38,6 +39,8 @@ var timeupData []byte
 // initAudio は背景音用の MP3 を読み込み、ループ再生用の audio.Player を初期化します。
 func initAudio(ctx *audio.Context) *audio.Player {
 	reader := bytes.NewReader(pinkNoiseData)
+	// TODO(zztkm): d.SampleRate() でサンプルレートを取得できる、この場合 audio.Context の
+	// 生成前に mp3.DecodeF32 を実行する必要がある
 	d, err := mp3.DecodeF32(reader)
 	if err != nil {
 		log.Fatal(err)
