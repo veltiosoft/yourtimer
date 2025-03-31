@@ -28,7 +28,8 @@ const (
 	timeupPlayerDefaultVolume = 0.2 // 効果音の音量
 )
 
-//go:embed _scripts/pink_noise_5min.mp3
+// TODO: 背景音楽を指定してアプリを起動することができるようにする
+//go:embed Morning.mp3
 var pinkNoiseData []byte
 
 // 効果音ファイル timeup.mp3 を埋め込み
