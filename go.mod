@@ -1,4 +1,4 @@
-module timer
+module yourtimer
 
 go 1.24.0
 

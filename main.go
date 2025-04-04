@@ -29,6 +29,7 @@ const (
 )
 
 // TODO: 背景音楽を指定してアプリを起動することができるようにする
+//
 //go:embed Morning.mp3
 var pinkNoiseData []byte
 
